@@ -164,6 +164,22 @@ local function communicate(premature, conf)
 
   local update_config_semaphore = semaphore.new(0)
 
+  -- how DP connection management works:
+  -- three threads are spawned, when any of these threads exits,
+  -- it means a fatal error has occurred on the connection,
+  -- and the other threads are also killed
+  --
+  -- * ping_thread: it is the only thread that sends WS frames to the CP
+  --                by sending out periodic PING frames to CP that checks
+  --                for the healthiness of the WS connection. In addition,
+  --                PING messages also contains the current config hash
+  --                applied on the local Kong DP
+  -- * update_thread: it grabs a received declarative config and apply it
+  --                  locally. In addition, this thread also persists the
+  --                  config onto the local file system
+  -- * main_thread: it is the only thread that receives WS frames from the CP,
+  --                and is also responsible for handling timeout detection
+
   -- connection established
   local ping_thread = ngx.thread.spawn(function()
     while not exiting() do
@@ -324,6 +340,20 @@ function _M.handle_cp_websocket()
       ngx_log(ngx_ERR, "unable to export config from database: ".. err)
     end
   end
+
+  -- how CP connection management works:
+  -- two threads are spawned, when any of these threads exits,
+  -- it means a fatal error has occurred on the connection,
+  -- and the other thread is also killed
+  --
+  -- * write_thread: it is the only thread that sends WS frames to the DP by
+  --                 grabbing any messages currently in the send queue and
+  --                 send them to the DP in a FIFO order. Notice that the
+  --                 PONG frames are also sent by this thread after they are
+  --                 queued by the read_thread
+  -- * read_thread: it is the only thread that receives WS frames from the DP
+  --                and records the current DP status in the database,
+  --                and is also responsible for handling timeout detection
 
   -- connection established
   local ping_thread = ngx.thread.spawn(function()
